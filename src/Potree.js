@@ -86,6 +86,8 @@ import {CopcLoader, EptLoader} from "./loader/EptLoader.js";
 import {PointCloudOctree} from "./PointCloudOctree.js";
 import {WorkerPool} from "./WorkerPool.js";
 
+export {WS} from './ws.js'
+
 export const workerPool = new WorkerPool();
 
 export const version = {

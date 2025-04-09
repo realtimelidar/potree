@@ -1,0 +1,124 @@
+// Warn if overriding existing method
+if(Array.prototype.equals)
+    console.warn("Overriding existing Array.prototype.equals. Possible causes: New API defines the method, there's a framework conflict or you've got double inclusions in your code.");
+// attach the .equals method to Array's prototype to call it on any array
+Array.prototype.equals = function (array) {
+    // if the other array is a falsy value, return
+    if (!array)
+        return false;
+    // if the argument is the same array, we can be sure the contents are same as well
+    if(array === this)
+        return true;
+    // compare lengths - can save a lot of time 
+    if (this.length != array.length)
+        return false;
+
+    for (var i = 0, l=this.length; i < l; i++) {
+        // Check if we have nested arrays
+        if (this[i] instanceof Array && array[i] instanceof Array) {
+            // recurse into the nested arrays
+            if (!this[i].equals(array[i]))
+                return false;       
+        }           
+        else if (this[i] != array[i]) { 
+            // Warning - two different object instances will never be equal: {x:20} != {x:20}
+            return false;   
+        }           
+    }       
+    return true;
+}
+// Hide method from for-in loops
+Object.defineProperty(Array.prototype, "equals", {enumerable: false});
+
+export const WS = (function() {
+    let WS = {};
+
+    let _connection = null;
+    let _ready = false;
+
+    /*
+        0 = Waiting magic number
+        1 = Waiting HELLO
+    */
+    let _state = 0;
+    
+    let _magicNumber = Array.from(new TextEncoder().encode("LidarServ Protocol"));
+    let _protocolVersion = 4;
+
+
+    WS.connect = (url) => {
+        return new Promise((res, rej) => {
+            try {
+                _connection = new WebSocket(url);
+                _connection.binaryType = "arraybuffer";
+    
+                _connection.addEventListener("open", _ => {
+                    _ready = true;
+                    console.log("opened websocket connection");
+                });
+    
+                _connection.addEventListener("error", e => {
+                    console.error("[ws error] " + e);
+                })
+    
+                _connection.addEventListener("message", event => {
+                    if (event.data instanceof ArrayBuffer) {
+                        const u8data = new Uint8Array(event.data);
+                        const data = Array.from(u8data);
+
+                        console.log("received " + event.data.byteLength + " bytes");
+                        console.log(data);
+
+                        if (_state == 0 && data.equals(_magicNumber)) {
+                            console.log("got handshake");
+                            _state = 1;
+
+                            // send back magic number
+                            _connection.send(new Uint8Array(_magicNumber));
+                        } else if (_state == 1) {
+                            const body = new Uint8Array(u8data.subarray(8)).buffer;
+                            const decoded = CBOR.decode(body);
+
+                            if (decoded["Hello"]) {
+                                const pv = decoded["Hello"]["protocol_version"];
+
+                                if (pv == _protocolVersion) {
+                                    console.log("got HELLO")
+                                    _state = 2;
+
+                                    // send hello message
+                                    WS.send({ 'Hello': { 'protocol_version': _protocolVersion }});
+
+                                    // all good
+                                    res();
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch(e) {
+                console.error("failed to create websocket connection (" + url + "): " + e);
+                rej();
+            }
+        });
+    };
+
+    WS.send = (message) => {
+        if (!_ready) {
+            console.error("[send] not yet ready!");
+            return;
+        }
+
+        const encoded = CBOR.encode(message);
+        const msg = new Uint8Array(encoded.byteLength + 8);
+        const dv = new DataView(msg.buffer);
+        
+        dv.setUint8(0, msg.byteLength);
+        msg.set(new Uint8Array(encoded), 8);
+
+        console.log("sending, ", msg);
+        _connection.send(msg);
+    };
+
+    return WS;
+})();
