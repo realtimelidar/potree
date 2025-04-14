@@ -51,7 +51,10 @@
 		viewer.loadSettingsFromURL();
 
 		Potree.WS.connect("ws://127.0.0.1:3000").then(() => {
-			console.log("cool");
+			Potree.WS.on('InitialBoundingBox', bb => {
+				console.log("got initial bounding box = ", bb);
+				
+			});
 		})
 		
 	</script>

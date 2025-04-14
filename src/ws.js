@@ -45,6 +45,25 @@ export const WS = (function() {
     let _magicNumber = Array.from(new TextEncoder().encode("LidarServ Protocol"));
     let _protocolVersion = 4;
 
+    let _events = new Map();
+
+    WS.on = (eventName, callback) => {
+        if (!_events.has(eventName)) {
+            _events.set(eventName, []);
+        }
+
+        _events.get(eventName).push(callback);
+    };
+
+    WS.call = (eventName, ...args) => {
+        if (!_events.has(eventName)) {
+            return;
+        }
+
+        for (const cb of _events.get(eventName)) {
+            cb(...args);
+        }
+    };
 
     WS.connect = (url) => {
         return new Promise((res, rej) => {
@@ -55,6 +74,9 @@ export const WS = (function() {
                 _connection.addEventListener("open", _ => {
                     _ready = true;
                     console.log("opened websocket connection");
+
+                    // all good
+                    res();
                 });
     
                 _connection.addEventListener("error", e => {
@@ -69,6 +91,7 @@ export const WS = (function() {
                         console.log("received " + event.data.byteLength + " bytes");
                         console.log(data);
 
+                        // exchange hello messages and check each others protocol compatibility
                         if (_state == 0 && data.equals(_magicNumber)) {
                             console.log("got handshake");
                             _state = 1;
@@ -77,7 +100,8 @@ export const WS = (function() {
                             _connection.send(new Uint8Array(_magicNumber));
                         } else if (_state == 1) {
                             const body = new Uint8Array(u8data.subarray(8)).buffer;
-                            const decoded = CBOR.decode(body);
+                            // const decoded = CBOR.decode(body);
+                            const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
 
                             if (decoded["Hello"]) {
                                 const pv = decoded["Hello"]["protocol_version"];
@@ -89,9 +113,25 @@ export const WS = (function() {
                                     // send hello message
                                     WS.send({ 'Hello': { 'protocol_version': _protocolVersion }});
 
-                                    // all good
-                                    res();
+                                    // tell the server that we are a viewer, that will query points.
+                                    WS.send({ 'ConnectionMode': { 'device': 'Viewer' }});
                                 }
+                            }
+                        } else if (_state == 2) {
+                            // wait for the point cloud info.
+                            // (we don't need that info at the moment, so all we do with it is ignoring it...)
+
+                            const body = new Uint8Array(u8data.subarray(8)).buffer;
+                            // const decoded = CBOR.decode(body);
+                            const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
+
+                            if (decoded["PointCloudInfo"]) {
+                                const coordinateSystem = decoded["PointCloudInfo"]["coordinate_system"];
+                                const attributes = decoded["PointCloudInfo"]["attributes"];
+                                const codec = decoded["PointCloudInfo"]["codec"];
+                                const currentBoundingBox = decoded["PointCloudInfo"]["current_bounding_box"];
+
+                                WS.call('InitialBoundingBox', currentBoundingBox);
                             }
                         }
                     }
@@ -109,7 +149,8 @@ export const WS = (function() {
             return;
         }
 
-        const encoded = CBOR.encode(message);
+        const encoded = new TextEncoder("utf-8").encode(JSON.stringify(message));
+        // const encoded = CBOR.encode(message);
         const msg = new Uint8Array(encoded.byteLength + 8);
         const dv = new DataView(msg.buffer);
         
