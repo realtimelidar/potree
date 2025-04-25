@@ -847,6 +847,66 @@ export class Viewer extends EventDispatcher{
 		}
 	};
 
+	zoomToBB(bb, factor, animationDuration = 0){
+		let view = this.scene.view;
+
+		let camera = this.scene.cameraP.clone();
+		camera.rotation.copy(this.scene.cameraP.rotation);
+		camera.rotation.order = "ZXY";
+		camera.rotation.x = Math.PI / 2 + view.pitch;
+		camera.rotation.z = view.yaw;
+		camera.updateMatrix();
+		camera.updateMatrixWorld();
+
+		const matrixWorld = this.scene.scene.matrixWorld;
+
+		camera.zoomToBB(bb, matrixWorld, factor);
+		const bs = bb.getBoundingSphere(new THREE.Sphere()).clone().applyMatrix4(matrixWorld);
+
+		let startPosition = view.position.clone();
+		let endPosition = camera.position.clone();
+		let startTarget = view.getPivot();
+		let endTarget = bs.center;
+		let startRadius = view.radius;
+		let endRadius = endPosition.distanceTo(endTarget);
+
+		if (animationDuration <= 0) {
+			view.position.copy(endPosition);
+			view.lookAt(startTarget.clone());
+			return;
+		}
+
+		let easing = TWEEN.Easing.Quartic.Out;
+
+		{ // animate camera position
+			let pos = startPosition.clone();
+			let tween = new TWEEN.Tween(pos).to(endPosition, animationDuration);
+			tween.easing(easing);
+
+			tween.onUpdate(() => {
+				view.position.copy(pos);
+			});
+
+			tween.start();
+		}
+
+		{ // animate camera target
+			let target = startTarget.clone();
+			let tween = new TWEEN.Tween(target).to(endTarget, animationDuration);
+			tween.easing(easing);
+			tween.onUpdate(() => {
+				view.lookAt(target);
+			});
+			tween.onComplete(() => {
+				view.lookAt(target);
+				this.dispatchEvent({type: 'focusing_finished', target: this});
+			});
+
+			this.dispatchEvent({type: 'focusing_started', target: this});
+			tween.start();
+		}
+	};
+
 	moveToGpsTimeVicinity(time){
 		const result = Potree.Utils.findClosestGpsTime(time, viewer);
 

@@ -75,6 +75,9 @@ export const WS = (function() {
                     _ready = true;
                     console.log("opened websocket connection");
 
+                    // send back magic number
+                    _connection.send(new Uint8Array(_magicNumber));
+
                     // all good
                     res();
                 });
@@ -96,12 +99,12 @@ export const WS = (function() {
                             console.log("got handshake");
                             _state = 1;
 
-                            // send back magic number
-                            _connection.send(new Uint8Array(_magicNumber));
+                            // send hello message
+                            WS.send({ 'Hello': { 'protocol_version': _protocolVersion }}, false);
                         } else if (_state == 1) {
                             const body = new Uint8Array(u8data.subarray(8)).buffer;
-                            // const decoded = CBOR.decode(body);
-                            const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
+                            const decoded = CBOR.decode(body);
+                            // const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
 
                             if (decoded["Hello"]) {
                                 const pv = decoded["Hello"]["protocol_version"];
@@ -110,11 +113,8 @@ export const WS = (function() {
                                     console.log("got HELLO")
                                     _state = 2;
 
-                                    // send hello message
-                                    WS.send({ 'Hello': { 'protocol_version': _protocolVersion }});
-
                                     // tell the server that we are a viewer, that will query points.
-                                    WS.send({ 'ConnectionMode': { 'device': 'Viewer' }});
+                                    WS.send({ 'ConnectionMode': { 'device': 'Viewer' }}, false);
                                 }
                             }
                         } else if (_state == 2) {
@@ -122,8 +122,8 @@ export const WS = (function() {
                             // (we don't need that info at the moment, so all we do with it is ignoring it...)
 
                             const body = new Uint8Array(u8data.subarray(8)).buffer;
-                            // const decoded = CBOR.decode(body);
-                            const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
+                            const decoded = CBOR.decode(body);
+                            // const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
 
                             if (decoded["PointCloudInfo"]) {
                                 const coordinateSystem = decoded["PointCloudInfo"]["coordinate_system"];
@@ -143,21 +143,27 @@ export const WS = (function() {
         });
     };
 
-    WS.send = (message) => {
+    WS.send = (message, isJson = true) => {
         if (!_ready) {
             console.error("[send] not yet ready!");
             return;
         }
 
-        const encoded = new TextEncoder("utf-8").encode(JSON.stringify(message));
-        // const encoded = CBOR.encode(message);
+        let encoded;
+
+        if (isJson) {
+            encoded = new TextEncoder("utf-8").encode(JSON.stringify(message));
+        } else {
+            encoded = CBOR.encode(message);
+        }
+
         const msg = new Uint8Array(encoded.byteLength + 8);
         const dv = new DataView(msg.buffer);
         
-        dv.setUint8(0, msg.byteLength);
+        dv.setUint32(0, msg.byteLength, true);
         msg.set(new Uint8Array(encoded), 8);
 
-        console.log("sending, ", msg);
+        console.log("sending (" + msg.byteLength + " bytes), ", msg);
         _connection.send(msg);
     };
 

@@ -51,9 +51,55 @@
 		viewer.loadSettingsFromURL();
 
 		Potree.WS.connect("ws://127.0.0.1:3000").then(() => {
-			Potree.WS.on('InitialBoundingBox', bb => {
+			Potree.WS.on('InitialBoundingBox', async bb => {
 				console.log("got initial bounding box = ", bb);
-				
+
+				// Point camera to initial bounding box
+				const bb3 = new THREE.Box3(new THREE.Vector3().fromArray(bb.min), new THREE.Vector3().fromArray(bb.max));
+				viewer.zoomToBB(bb3, 1);
+				await new Promise((res, rej) => { setTimeout(() => { res(); }, 10); });
+
+				setInterval(() => {
+					const cam = viewer.scene.cameraP;
+
+					const pM = cam.projectionMatrix;
+					const vM = cam.matrixWorldInverse;
+
+					const camera_pos = viewer.scene.cameraP.position.toArray();
+					const camera_dir = cam.getWorldDirection(new THREE.Vector3()).toArray();
+					const camera_up = [0.0, 0.0, 1.0];
+					const fov_y = Math.PI / 4;
+					const z_near = Math.abs(new THREE.Vector3(0.0, 0.0, -1.0).applyMatrix4(cam.projectionMatrixInverse).z);
+					const z_far = Math.abs(new THREE.Vector3(0.0, 0.0, 1.0).applyMatrix4(cam.projectionMatrixInverse).z);
+					const window_size = [window.innerWidth, window.innerHeight];
+					const max_distance = 10.0;
+
+					const a = {
+						"Query": {
+							"query": {
+								"And": [
+									{
+										"ViewFrustum": {
+											"camera_pos": camera_pos,
+											"camera_dir": camera_dir,
+											"camera_up": camera_up,
+											"fov_y": fov_y,
+											"z_near": z_near,
+											"z_far": z_far,
+											"window_size": window_size,
+											"max_distance": max_distance
+										}
+									}, "Full"
+								]
+							},
+							"config": {
+								"one_shot": false,
+								"point_filtering": true
+							}
+						}
+					};
+					Potree.WS.send(a);
+				}, 100);
 			});
 		})
 		

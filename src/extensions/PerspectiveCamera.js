@@ -37,3 +37,24 @@ THREE.PerspectiveCamera.prototype.zoomTo = function (node, factor) {
 	let offset = this.getWorldDirection(new THREE.Vector3()).multiplyScalar(-distanceFactor);
 	this.position.copy(bs.center.clone().add(offset));
 };
+
+THREE.PerspectiveCamera.prototype.zoomToBB = function (bb, matrixWorld, factor) {
+	if (!bb) {
+		return;
+	}
+
+	const bs = bb.getBoundingSphere(new THREE.Sphere()).clone().applyMatrix4(matrixWorld);
+	let _factor = factor || 1;
+
+	let radius = bs.radius;
+	let fovr = this.fov * Math.PI / 180;
+
+	if (this.aspect < 1) {
+		fovr = fovr * this.aspect;
+	}
+
+	let distanceFactor = Math.abs(radius / Math.sin(fovr / 2)) * _factor;
+
+	let offset = this.getWorldDirection(new THREE.Vector3()).multiplyScalar(-distanceFactor);
+	this.position.copy(bs.center.clone().add(offset));
+};
