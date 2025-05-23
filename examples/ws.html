@@ -42,6 +42,7 @@
 	<script type="module">
 
 		import * as THREE from "../../libs/three.js/build/three.module.js";
+		import {Box3Helper} from "../../src/utils/Box3Helper.js";
 	
 		window.viewer = new Potree.Viewer(document.getElementById("potree_render_area"));
 		
@@ -50,27 +51,79 @@
 		viewer.setPointBudget(1_000_000);
 		viewer.loadSettingsFromURL();
 
+		viewer.loadGUI(() => {
+			viewer.setLanguage('en');
+			$("#menu_tools").next().show();
+			//viewer.toggleSidebar();
+		});
+
 		Potree.WS.connect("ws://127.0.0.1:3000").then(() => {
 			Potree.WS.on('InitialBoundingBox', async bb => {
 				console.log("got initial bounding box = ", bb);
 
+				const pcId = Potree.rtPointcloud.newPointcloud();
+				window.pointcloudId = pcId;
+
 				// Point camera to initial bounding box
 				const bb3 = new THREE.Box3(new THREE.Vector3().fromArray(bb.min), new THREE.Vector3().fromArray(bb.max));
-				viewer.zoomToBB(bb3, 1);
 				await new Promise((res, rej) => { setTimeout(() => { res(); }, 10); });
 
-				setInterval(() => {
+				const b3h = new Box3Helper(bb3);
+				viewer.scene.scene.add(b3h);
+
+				// Set initial camera rotation same as lidarserv-viewer
+				const vPosition = new THREE.Vector3(360256.0, 4571304.706493851, 791.2935061482602);
+				const vDirection = new THREE.Vector3(0.0, 0.70710678118662, -0.7071067811864751).normalize();
+
+				viewer.scene.cameraP.position.copy(vPosition);
+				const t = vPosition.clone().add(vDirection);
+				viewer.scene.cameraP.lookAt(t);
+				viewer.scene.cameraP.updateMatrixWorld(true);
+
+				viewer.scene.view.position.copy(vPosition);
+				viewer.scene.view.lookAt(t);
+
+				// console.log(Potree.rtPointcloud.t3Points);
+
+				Potree.WS.on('UpdateNode', updateInfo => {
+					if (!Potree.rtPointcloud.doesNodeExist(updateInfo.node)) {
+						// Insert
+						console.log("Received new node!");
+
+						Potree.rtPointcloud.addNodeToPointcloud(updateInfo.node, pcId);
+						console.log("Added node (" + JSON.stringify(updateInfo.node) + ") to pointcloud (" + pcId + ")");
+					}
+
+					// Insert/Update
+					Potree.rtPointcloud.addPointsToNode(updateInfo.points, updateInfo.node);
+					console.log("Set node (" + JSON.stringify(updateInfo.node) + ") points (" + updateInfo.points.length + ")");
+
+					Potree.rtPointcloud.updateT3Points();
+					
+				});
+
+				Potree.WS.on('DeleteNode', node => {
+					Potree.rtPointcloud.removeNode(node);
+					console.log("Removed node (" + JSON.stringify(node) + ") from pointcloud (" + pcId + ")");
+				});
+
+				setTimeout(() => {
 					const cam = viewer.scene.cameraP;
+					cam.updateMatrixWorld(true);
 
 					const pM = cam.projectionMatrix;
 					const vM = cam.matrixWorldInverse;
 
-					const camera_pos = viewer.scene.cameraP.position.toArray();
-					const camera_dir = cam.getWorldDirection(new THREE.Vector3()).toArray();
+					const vec3 = new THREE.Vector3();
+					const camera_pos = vec3.setFromMatrixPosition(cam.matrixWorld).toArray();
+
+					vec3.set(0, 0, -1);
+					const camera_dir = vec3.applyQuaternion(cam.quaternion).normalize().toArray();
 					const camera_up = [0.0, 0.0, 1.0];
 					const fov_y = Math.PI / 4;
 					const z_near = Math.abs(new THREE.Vector3(0.0, 0.0, -1.0).applyMatrix4(cam.projectionMatrixInverse).z);
 					const z_far = Math.abs(new THREE.Vector3(0.0, 0.0, 1.0).applyMatrix4(cam.projectionMatrixInverse).z);
+
 					const window_size = [window.innerWidth, window.innerHeight];
 					const max_distance = 10.0;
 
@@ -84,8 +137,8 @@
 											"camera_dir": camera_dir,
 											"camera_up": camera_up,
 											"fov_y": fov_y,
-											"z_near": z_near,
-											"z_far": z_far,
+											"z_near": 11.190580082124141,//z_near ,//* 100,
+											"z_far": 11190580.082987662,//z_far ,//* 10,
 											"window_size": window_size,
 											"max_distance": max_distance
 										}
@@ -98,8 +151,11 @@
 							}
 						}
 					};
+					const b = '{"Query":{"query":{"And":[{"ViewFrustum":{"camera_pos":[360320.0,4571304.706493851,791.2935061482602],"camera_dir":[0.0,0.70710678118662,-0.7071067811864751],"camera_up":[0.0,0.0,1.0],"fov_y":0.7853981633974483,"z_near":11.190580082124141,"z_far":11190580.082987662,"window_size":[500.0,500.0],"max_distance":10.0}},"Full"]},"config":{"one_shot":false,"point_filtering":true}}}';
+					console.log(JSON.stringify(a));
 					Potree.WS.send(a);
-				}, 100);
+					// Potree.WS.send(JSON.parse(b));
+				}, 3000);
 			});
 		})
 		

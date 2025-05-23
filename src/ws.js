@@ -45,6 +45,8 @@ export const WS = (function() {
     let _magicNumber = Array.from(new TextEncoder().encode("LidarServ Protocol"));
     let _protocolVersion = 4;
 
+    let _lastAck = 0;
+
     let _events = new Map();
 
     WS.on = (eventName, callback) => {
@@ -126,12 +128,251 @@ export const WS = (function() {
                             // const decoded = JSON.parse(new TextDecoder("utf-8").decode(body));
 
                             if (decoded["PointCloudInfo"]) {
+                                _state = 3;
+
                                 const coordinateSystem = decoded["PointCloudInfo"]["coordinate_system"];
                                 const attributes = decoded["PointCloudInfo"]["attributes"];
                                 const codec = decoded["PointCloudInfo"]["codec"];
                                 const currentBoundingBox = decoded["PointCloudInfo"]["current_bounding_box"];
 
                                 WS.call('InitialBoundingBox', currentBoundingBox);
+                            }
+                        } else if (_state == 3) {
+                            let dv = new DataView(u8data.buffer);
+                            const encodedSz = dv.getBigUint64(0, true);
+
+                            const messageLen = Number(encodedSz & 0xffffffn);
+                            const headerLen = Number(encodedSz >> 32n);
+
+                            const headerDecodedU8 = JSON.parse(new TextDecoder("utf-8").decode(new Uint8Array(u8data.subarray(8, headerLen+8)).buffer));
+                            const payload = new Uint8Array(u8data.subarray(headerLen+8));
+
+                            if (headerDecodedU8["Node"]) {
+                                const lod = headerDecodedU8["Node"]["node"]["lod"];
+                                const pos = headerDecodedU8["Node"]["node"]["pos"];
+                                const updateNumber= headerDecodedU8["Node"]["update_number"];
+
+                                // Do ack
+                                if (updateNumber >= _lastAck + 3 /* one shot = false */) {
+                                    WS.send({
+                                        'ResultAck': {
+                                            'update_number': updateNumber
+                                        }
+                                    });
+                                }
+
+                                if (payload.byteLength <= 0) {
+                                    WS.call('DeleteNode', {
+                                        "node": {
+                                            lod,
+                                            pos,
+                                        },
+                                    });
+
+                                    return;
+                                }
+
+                                dv = new DataView(payload.buffer, 16);
+                                let pByteOffset = 0;
+
+                                // Version must be 1
+                                if (dv.getUint8(pByteOffset) != 1) {
+                                    console.error("Version is expected to be 1");
+                                    return;
+                                }
+
+                                pByteOffset++;
+
+                                const littleEndian = dv.getUint8(pByteOffset) == 0;
+                                pByteOffset++;
+
+                                const compression = dv.getUint8(pByteOffset);
+                                pByteOffset++;
+
+                                if (compression != 0) {
+                                    console.error("Compression is currenty unsupported");
+                                    return;
+                                }
+
+                                // point number is u64, however in practice i've not seen it exceeding even u16,
+                                // so we cast to Number since its easier to work with
+                                const pointCount = Number(dv.getBigUint64(pByteOffset, littleEndian));
+                                pByteOffset += 8;
+
+                                const attrCount = dv.getUint8(pByteOffset);
+                                pByteOffset++;
+
+                                // Start reading attributes
+                                // attr: { "name: "xxx", "type": xxx, "length": xxx }
+                                const attrs = [];
+
+                                for (let i = 0; i < attrCount; i++) {
+                                    const szName = dv.getUint8(pByteOffset);
+                                    pByteOffset++;
+
+                                    const name = new TextDecoder("utf-8").decode(new Uint8Array(payload.subarray(dv.byteOffset + pByteOffset, szName + dv.byteOffset + pByteOffset)).buffer);
+                                    pByteOffset += szName;
+
+                                    const length = Number(dv.getBigUint64(pByteOffset, littleEndian));
+                                    pByteOffset += 8;
+
+                                    const type = dv.getUint8(pByteOffset);
+                                    pByteOffset++;
+
+                                    attrs.push({
+                                        name,
+                                        type,
+                                        length
+                                    });
+                                }
+
+                                // At this point we have parsed all the attributes
+                                // So regarding the byte offset, we are just at the beggining
+                                // of the first attribute value
+
+                                // Start reading points
+                                // We will only parse the following attributes:
+                                // Position3D, Intensity, GpsTime, ColorRGB
+                                const points = [];
+
+                                for (let i = 0; i < pointCount * attrCount; i++) {
+                                    const attr = attrs[i % attrCount];
+                                    const pnt = (i / attrCount) >> 0;
+
+                                    const name = attr.name;
+                                    const type = attr.type;
+                                    const length = attr.length;
+
+                                    let attrValue;
+
+                                    switch (type) {
+                                        case 0:
+                                            attrValue = dv.getUint8(pByteOffset);
+                                            pByteOffset++;
+                                            break;
+                                        case 1:
+                                            attrValue = dv.getInt8(pByteOffset);
+                                            pByteOffset++;
+                                            break;
+                                        case 2:
+                                            attrValue = dv.getUint16(pByteOffset, littleEndian);
+                                            pByteOffset += 2;
+                                            break;
+                                        case 3:
+                                            attrValue = dv.getInt16(pByteOffset, littleEndian);
+                                            pByteOffset += 2;
+                                            break;
+                                        case 4:
+                                            attrValue = dv.getUint32(pByteOffset, littleEndian);
+                                            pByteOffset += 4;
+                                            break;
+                                        case 5:
+                                            attrValue = dv.getInt32(pByteOffset, littleEndian);
+                                            pByteOffset += 4;
+                                            break;
+                                        case 6:
+                                            attrValue = dv.getBigUint64(pByteOffset, littleEndian);
+                                            pByteOffset += 8;
+                                            break;
+                                        case 7:
+                                            attrValue = dv.getBigInt64(pByteOffset, littleEndian);
+                                            pByteOffset += 8;
+                                            break;
+                                        case 8:
+                                            attrValue = dv.getFloat32(pByteOffset, littleEndian);
+                                            pByteOffset += 4;
+                                            break;
+                                        case 9:
+                                            attrValue = dv.getFloat64(pByteOffset, littleEndian);
+                                            pByteOffset += 8;
+                                            break;
+                                        case 10:
+                                            attrValue = [
+                                                dv.getUint8(pByteOffset),
+                                                dv.getUint8(pByteOffset + 1),
+                                                dv.getUint8(pByteOffset + 2)
+                                            ];
+                                            pByteOffset += 3;
+                                            break;
+                                        case 11:
+                                            attrValue = [
+                                                dv.getUint16(pByteOffset, littleEndian),
+                                                dv.getUint16(pByteOffset + 1 * 2, littleEndian),
+                                                dv.getUint16(pByteOffset + 2 * 2, littleEndian)
+                                            ];
+                                            pByteOffset += 3 * 2;
+                                            break;
+                                        case 12:
+                                            attrValue = [
+                                                dv.getFloat32(pByteOffset, littleEndian),
+                                                dv.getFloat32(pByteOffset + 1 * 4, littleEndian),
+                                                dv.getFloat32(pByteOffset + 2 * 4, littleEndian)
+                                            ];
+                                            pByteOffset += 3 * 4;
+                                            break;
+                                        case 13:
+                                            attrValue = [
+                                                dv.getInt32(pByteOffset, littleEndian),
+                                                dv.getInt32(pByteOffset + 1 * 4, littleEndian),
+                                                dv.getInt32(pByteOffset + 2 * 4, littleEndian)
+                                            ];
+                                            pByteOffset += 3 * 4;
+                                            break;
+                                        case 14:
+                                            attrValue = [
+                                                dv.getFloat64(pByteOffset, littleEndian),
+                                                dv.getFloat64(pByteOffset + 1 * 8, littleEndian),
+                                                dv.getFloat64(pByteOffset + 2 * 8, littleEndian)
+                                            ];
+                                            pByteOffset += 3 * 8;
+                                            break;
+                                        case 15:
+                                            attrValue = [
+                                                dv.getUint8(pByteOffset),
+                                                dv.getUint8(pByteOffset + 1),
+                                                dv.getUint8(pByteOffset + 2),
+                                                dv.getUint8(pByteOffset + 3)
+                                            ];
+                                            pByteOffset += 4;
+                                            break;
+                                        case 16:
+                                            attrValue = [];
+                                            for (let i = 0; i < length; i++) {
+                                                attrValue.push(dv.getUint8(pByteOffset + i));
+                                            }
+                                            pByteOffset += length;
+                                            break;
+                                        default:
+                                            console.error("Unsupported attribute type " + type)
+
+                                    }
+
+                                    if (points.length <= pnt) {
+                                        points[pnt] = {
+                                            attrs: [],
+                                        };
+                                    }
+
+                                    points[pnt].attrs.push({
+                                        value: attrValue,
+                                        name   
+                                    });
+                                }
+
+                                WS.call('UpdateNode', {
+                                    "node": {
+                                        lod,
+                                        pos,
+                                    },
+                                    "points": points
+                                });
+                                // console.log('UpdateNode', {
+                                //     "node": {
+                                //         lod,
+                                //         pos,
+                                //     },
+                                //     "points": points
+                                // })
                             }
                         }
                     }

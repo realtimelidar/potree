@@ -31,10 +31,19 @@ export class View{
 		this._pitch = Math.max(Math.min(angle, this.maxPitch), this.minPitch);
 	}
 
-	get direction () {
-		let dir = new THREE.Vector3(0, 1, 0);
+	// get direction () {
+	// 	let dir = new THREE.Vector3(0, 1, 0);
 
-		dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch);
+	// 	dir.applyAxisAngle(new THREE.Vector3(1, 0, 0), this.pitch);
+	// 	dir.applyAxisAngle(new THREE.Vector3(0, 0, 1), this.yaw);
+
+	// 	return dir;
+	// }
+
+	get direction () {
+		let dir = new THREE.Vector3(1, 0, 0);
+
+		dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.pitch);
 		dir.applyAxisAngle(new THREE.Vector3(0, 0, 1), this.yaw);
 
 		return dir;

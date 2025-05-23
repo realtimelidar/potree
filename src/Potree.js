@@ -87,6 +87,7 @@ import {PointCloudOctree} from "./PointCloudOctree.js";
 import {WorkerPool} from "./WorkerPool.js";
 
 export {WS} from './ws.js'
+import {RTPointcloud} from "./RTPointcloud.js";
 
 export const workerPool = new WorkerPool();
 
@@ -97,6 +98,8 @@ export const version = {
 };
 
 export let lru = new LRU();
+
+export const rtPointcloud = new RTPointcloud();
 
 console.log('Potree ' + version.major + '.' + version.minor + version.suffix);
 

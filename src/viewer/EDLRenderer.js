@@ -252,7 +252,7 @@ export class EDLRenderer{
 			viewer.renderer.setRenderTarget(this.rtEDL);
 			
 			if(lights.length > 0){
-				viewer.pRenderer.render(viewer.scene.scenePointCloud, camera, this.rtEDL, {
+				viewer.pRenderer.render(viewer.scene.scene /* scenePointCloud */, camera, this.rtEDL, {
 					clipSpheres: viewer.scene.volumes.filter(v => (v instanceof SphereVolume)),
 					shadowMaps: [this.shadowMap],
 					transparent: false,
@@ -282,7 +282,7 @@ export class EDLRenderer{
 				//test.matrixWorldInverse.multiplyMatrices(test.matrixWorldInverse, mat);
 				
 
-				viewer.pRenderer.render(viewer.scene.scenePointCloud, camera, this.rtEDL, {
+				viewer.pRenderer.render(viewer.scene.scene/* scenePointCloud */, camera, this.rtEDL, {
 					clipSpheres: viewer.scene.volumes.filter(v => (v instanceof SphereVolume)),
 					transparent: false,
 				});
